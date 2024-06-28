@@ -44,8 +44,6 @@ my $hooks = Plugins::addHooks(
 
 message "refreshNPCAttack successfully loaded.\n", "success";
 
-my $chance_timeout; #we don't use $args->{move_timeout}, we have to make our own
-
 sub onUnload {
     Plugins::delHooks($hooks);
 }
@@ -61,6 +59,8 @@ sub onPacketAttack
 	my (undef,$args) = @_;
 
 	my $source = Actor::get($args->{sourceID});
+
+	return unless defined $source;
 
 	my $attackerName = substr($source->nameString, 0,3);
 
