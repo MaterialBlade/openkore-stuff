@@ -15,14 +15,6 @@
 #		...
 #
 #	This $args->{return} prevents the map route from updating every time betterLeader sets a waypoint
-#
-#	STUFF TO REMOVE/DISABLE:
-#	- Remove MVP Timer functionality
-#	- Remove anything related to flags or attackDefender
-#	- comment out resupplying code
-#	- comment out rescuing dead chars on other maps code
-#	- remove or comment out "Group up!" functionality
-#	- clean up party chat stuff
 ###########
 
 
@@ -598,15 +590,21 @@ sub ai_getAggressives {
 	my $wantArray = wantarray;
 	my $num = 0;
 	my @agMonsters;
+	my $portalDist = $config{'attackMinPortalDistance'} || 4;
+
 
 	for my $monster (@$monstersList) {
 		my $control = Misc::mon_control($monster->name,$monster->{nameID}) if $type || !$wantArray;
 		my $ID = $monster->{ID};
+		my $pos = calcPosition($monster);
 
 		next if ($monster->{nameID} eq 1068); # ignore hydras. they fuck things up in byalan dungeon
 
 		# Never attack monsters that we failed to get LOS with
 		next if (!timeOut($monster->{attack_failedLOS}, $timeout{ai_attack_failedLOS}{timeout}));
+
+		# ignore enemies that are near portals
+		next if($config{"betterLeader_ignoreNearPortal"} and positionNearPortal($pos, $portalDist));
 		#next if (!timeOut($monster->{attack_failed}, $timeout{ai_attack_unfail}{timeout})); # skip the fail for now, since this is what attackDefender controls...
 		next if (!Misc::checkMonsterCleanness($ID));
 		next if ($control->{attack_auto} == -1);
