@@ -8,7 +8,7 @@
 # What it does: scans route for maps we can @go to. If there is, we @go to them
 #
 # Config key (put in config.txt):
-#	route_routeUseGo 1
+#	route_useGoCommand 1
 # 
 # Source Mod: CalcMapRoute.pm
 # update the 'iterate' sub. look for the following code
