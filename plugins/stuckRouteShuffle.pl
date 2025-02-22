@@ -1,7 +1,7 @@
 ############################ 
 # stuckRouteShuffle plugin for OpenKore MaterialBlade
 # 
-# Will use @refresh if attacked by an enemy called "NPC"
+# Bot will try to shuffle to a nearby open cell when it gets stuck
 #
 # Use:
 # Add 'stuckRouteShuffle 1' to your config
