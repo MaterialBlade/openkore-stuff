@@ -2,7 +2,9 @@
 # processD plugin for Openkore
 # made by MaterialBlade with help from Kwak/Isora
 #
-# USAGE: type 'processD (monsternumber) [0/1]' in the OpenKore window. the [0/1] for if the monster is a boss protocol type
+# USAGE: type 'processD (monsternumber) [0/1] [0/1]' in the OpenKore window
+# the first [0/1] for if the monster is a boss protocol type
+# the second [0/1] for if you want to save directly to mob_db.txt
 #
 # EXAMPLE: processD 1001
 # OUTPUT: 1001,SCORPION,Scorpion,Scorpion,24,1109,0,574,352,1,80,135,30,0,1,24,24,5,52,5,10,12,0,4,23,0x2003695,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -22,11 +24,6 @@ use Data::Dumper;
 use Settings;
 
 Plugins::register("processD", "converts monsterinfo command into mob_db data", \&on_unload, \&on_reload);
-
-my %requestQueue;
-my $mytimeout;
-my $lockOut = 0;
-my $iw_map;
 
 use Scalar::Util qw(looks_like_number);
 
@@ -49,8 +46,14 @@ sub on_reload {
 
 
 my $mvpYes = 0;
+my $saveYes = 0;
 my $capturesLeft = 0;
 my $captureString = "";
+
+my %size_lut = ('Small' => 0,'Medium' => 1,'Large' => 2);
+my %race_lut = ('Formless' => 0, 'Undead' => 1, 'Beast' => 2, 'Plant' => 3, 'Insect' => 4, 'Fish' => 5, 'Demon' => 6, 'Demi-Human' => 7, 'Angel' => 8, 'Dragon' => 9);
+my %element_lut = ('Neutral' => 0, 'Water' => 1, 'Earth' => 2, 'Fire' => 3, 'Wind' => 4, 'Poison' => 5, 'Holy' => 6, 'Dark' => 7, 'Ghost' => 8, 'Undead' => 9);
+
 
 sub selfChat
 {
@@ -83,7 +86,9 @@ sub processD
 	# first make sure the data is usable
 	if(scalar(@values) eq 0 || !looks_like_number($values[0]))
 	{
-		print "ERROR: Need to supply a monster # with processD\n";
+		print "processD ERROR: Need to supply a monster # with processD\n";
+		print "Usage: processD (monsterID) (boss[0/1]) (save[0/1])\n";
+		print "Example: processD 1001 0 1 <-- save non-boss monster 1001 to mob_db.txt\n";
 		return;
 	}
 
@@ -91,9 +96,15 @@ sub processD
 
 	my $mi = $values[0];
 	$mvpYes = 0;
-	if(scalar(@values) eq 2 and looks_like_number($values[1]))
+	if(scalar(@values) >= 2 and looks_like_number($values[1]))
 	{
 		$mvpYes = $values[1];
+	}
+
+	$saveYes = 0;
+	if(scalar(@values) >= 3 and looks_like_number($values[2]))
+	{
+		$saveYes = $values[2];
 	}
 
 	$capturesLeft = 4;
@@ -103,10 +114,6 @@ sub processD
 sub processDataCall
 {
 	my $string = shift;
-
-	my %size_lut = ('Small' => 0,'Medium' => 1,'Large' => 2);
-	my %race_lut = ('Formless' => 0, 'Undead' => 1, 'Beast' => 2, 'Plant' => 3, 'Insect' => 4, 'Fish' => 5, 'Demon' => 6, 'Demi-Human' => 7, 'Angel' => 8, 'Dragon' => 9);
-	my %element_lut = ('Neutral' => 0, 'Water' => 1, 'Earth' => 2, 'Fire' => 3, 'Wind' => 4, 'Poison' => 5, 'Holy' => 6, 'Dark' => 7, 'Ghost' => 8, 'Undead' => 9);
 	
 	my $file = Settings::getTableFilename('mob_db.txt');
 
@@ -128,17 +135,23 @@ sub processDataCall
 		my $element = ($27*2)."".$element_lut{$26};
 		my $mode = "0x2003695";
 
-		if($mvpYes eq 1)
+		if($mvpYes == 1)
 		{
 			$mode = "0x6200000";
 		}
 
-		#print "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
-		# save data to mon_db.txt directly
-		open my $fh, '>>', $file;
-		print $fh "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
-		close $fh;
-		message "Saved $4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 to mon_db.txt!\n";
+		if($saveYes == 1)
+		{
+			# save data to mon_db.txt directly
+			open my $fh, '>>', $file;
+			print $fh "\n$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+			close $fh;
+			message "Saved $4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 to mon_db.txt!\n";
+		}
+		else
+		{
+			print "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+		}
 	}
 }
 
