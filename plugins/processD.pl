@@ -19,6 +19,7 @@ use Misc;
 use Log qw(message warning error debug);
 use Translation;
 use Data::Dumper;
+use Settings;
 
 Plugins::register("processD", "converts monsterinfo command into mob_db data", \&on_unload, \&on_reload);
 
@@ -106,7 +107,8 @@ sub processDataCall
 	my %size_lut = ('Small' => 0,'Medium' => 1,'Large' => 2);
 	my %race_lut = ('Formless' => 0, 'Undead' => 1, 'Beast' => 2, 'Plant' => 3, 'Insect' => 4, 'Fish' => 5, 'Demon' => 6, 'Demi-Human' => 7, 'Angel' => 8, 'Dragon' => 9);
 	my %element_lut = ('Neutral' => 0, 'Water' => 1, 'Earth' => 2, 'Fire' => 3, 'Wind' => 4, 'Poison' => 5, 'Holy' => 6, 'Dark' => 7, 'Ghost' => 8, 'Undead' => 9);
-
+	
+	my $file = Settings::getTableFilename('mob_db.txt');
 
 	if($string =~ /Monster\:\s\'(.*)\'\/?\'(.*)'\/?\'(.*)\'+\s+\((\d+)\)\sLv\:(\d+)\s+HP\:(\d+)\s+Base\s+EXP\:(\d+)\s+Job\s+EXP\:(\d+)\s+HIT\:(\d+)\s+FLEE\:(\d+)\s+DEF\:(\d+)\s+MDEF\:(\d+)\s+STR\:(\d+)\s+AGI\:(\d+)\s+VIT\:(\d+)\s+INT\:(\d+)\s+DEX\:(\d+)\s+LUK\:(\d+)\s+ATK\:(\d+)\~(\d+)\s+Range\:(\d+)\~(\d+)\~?(\d+?)\s+Size\:(\w+)\s+Race\:\s+(\w+)\s+Element\:\s+(\w+)\s+\(Lv\:(\d+)\)/)
 	{
@@ -131,7 +133,12 @@ sub processDataCall
 			$mode = "0x6200000";
 		}
 
-		print "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+		#print "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+		# save data to mon_db.txt directly
+		open my $fh, '>>', $file;
+		print $fh "$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+		close $fh;
+		message "Saved $4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 to mon_db.txt!\n";
 	}
 }
 
