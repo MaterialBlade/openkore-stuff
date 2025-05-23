@@ -49,6 +49,7 @@ my $mvpYes = 0;
 my $saveYes = 0;
 my $capturesLeft = 0;
 my $captureString = "";
+my $safety_break = "\n";
 
 my %size_lut = ('Small' => 0,'Medium' => 1,'Large' => 2);
 my %race_lut = ('Formless' => 0, 'Undead' => 1, 'Beast' => 2, 'Plant' => 3, 'Insect' => 4, 'Fish' => 5, 'Demon' => 6, 'Demi-Human' => 7, 'Angel' => 8, 'Dragon' => 9);
@@ -144,9 +145,11 @@ sub processDataCall
 		{
 			# save data to mon_db.txt directly
 			open my $fh, '>>', $file;
-			print $fh "\n$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
+			print $fh $safety_break."$4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n";
 			close $fh;
 			message "Saved $4,$3,$1,$2,$5,$6,0,$7,$8,$21,$19,$20,$11,$12,$13,$14,$15,$16,$17,$18,$22,$23,$size,$race,$element,$mode,200,1000,900,432,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 to mon_db.txt!\n";
+
+			$safety_break = "";
 		}
 		else
 		{
