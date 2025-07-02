@@ -19,6 +19,7 @@ sub main
 	my @output;
 	my $file = 'itemInfo_EN.lua';
 	my $i = 0;
+	my $nameLine = -1;
 	
 	print "File can't be loaded\n" unless (-r $file);
 	return unless (-r $file);
@@ -33,11 +34,24 @@ sub main
 		if($line =~ /(\s+)(identifiedDisplayName = ")(.*)/)
 		{
 			$output[$i-3] = $1."un".$2."[?]".$3."\n";
+			$nameLine = ($i-3);
 		}
 
 		if($line =~ /(\s+)(identifiedResourceName = ")(.*)/)
 		{
 			$output[$i-3] = $1."un".$2.$3."\n";
+		}
+		
+		if($line =~ /(\s+)(slotCount = )(\d+)(,)/)
+		{
+			if($3 > 0)
+			{
+				#print "Got here!\n";
+				my $temp = $output[$nameLine];
+				my $slots = " [".$3."]\",";
+				$temp =~ s/",/$slots/;
+				$output[$nameLine] = $temp;
+			}
 		}
 
 		$i++;
