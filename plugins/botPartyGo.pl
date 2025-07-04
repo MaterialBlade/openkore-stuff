@@ -20,6 +20,7 @@ Plugins::register("botPartyGo", "plugin for remote automatic party play", \&on_u
 
 use constant {
 	OFFLINE_RECHECK => 20,
+	BROADCAST_TIMEOUT => 120,
 	TRUE => 1,
 	FALSE => 0,
 };
@@ -138,6 +139,7 @@ my $aiHook = Plugins::addHooks(
 	["packet_pre/party_join", \&partyJoin, undef],
 	["packet_pre/party_users_info", \&partyUsersInfo, undef],
 	["packet_pre/party_invite_result", \&party_invite_result, undef],
+	["packet_pre/party_leave", \&party_leave, undef],
 	["packet_pre/actor_info", \&actor_info, undef],
 
 	#Plugins::callHook('npc_chat', {
@@ -176,15 +178,21 @@ sub actor_info
 
 }
 
+sub party_leave
+{
+	#my (undef,$args) = @_;
+	#print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
+}
+
 sub party_invite_result
 {
-	my (undef,$args) = @_;
+	#my (undef,$args) = @_;
 	#print "~~~~~~~~~~~~~~~ Got here party_invite_result!\n";
 }
 
 sub partyUsersInfo
 {
-	my (undef,$args) = @_;
+	#my (undef,$args) = @_;
 
 	#print "~~~~~~~~~~~~~~~ Got here partyUsersInfo!\n";
 	#sendMessage($messageSender, "p", "partyUsersInfo got here!");
@@ -195,12 +203,21 @@ sub partyJoin
 	return unless $config{"botPartyGo"};
 
 	my (undef,$args) = @_;
+	return unless $char->{'party'}{'users'}{$args->{ID}};
 
 	print "~~~~~~~~~~~~~~~~~~ Got here party join!\n";
 
 	my $minLvl = getPartyMinLevel();
 	my $maxLvl = $minLvl + 15;
 
+	# TODO: FIX THIS LEVEL GATE CHECK
+	# this doesn't quite work correctly since by the time we're checking to kick the player, the min level has already been adjust to THEIR level
+	# need to store the min level for recheck or something
+	# first pass (char not in party yet) store the level
+	# second pass (char is in party) we can check vs that stored level, then kick if necessary
+
+	# also need to consider that lowest+15 doesn't always make the most sense. might be better to SAY the min/max level range
+	# dunno what the best way to communicate the level would be :s
 	if($args->{lv} < $minLvl || $args->{lv} > $maxLvl)
 	{
 		#outside of level range, kick their ass out
@@ -456,7 +473,7 @@ sub ai_pre_LEADER
 	return unless ($char->{party}{joined});
 
 	# check if there are empty party slots, if there are, send out a broadcast message
-	if(scalar(@partyUsersID) < 12 and timeOut($myTimeouts->{'broadcast_spam'},60))
+	if(scalar(@partyUsersID) < 12 and timeOut($myTimeouts->{'broadcast_spam'},BROADCAST_TIMEOUT))
 	{
 		$myTimeouts->{'broadcast_spam'} = time;
 
