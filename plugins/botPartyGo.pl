@@ -18,7 +18,14 @@ use feature "switch";
 
 Plugins::register("botPartyGo", "plugin for remote automatic party play", \&on_unload, \&on_reload);
 
+use constant {
+	OFFLINE_RECHECK => 20,
+	TRUE => 1,
+	FALSE => 0,
+};
+
 my $myTimeouts;
+my @offlineCheckList = ();
 
 #use Scalar::Util qw(looks_like_number);
 
@@ -192,6 +199,7 @@ sub partyJoin
 	if($args->{lv} < $minLvl || $args->{lv} > $maxLvl)
 	{
 		#outside of level range, kick their ass out
+		print $args->{user}."(".$args->{lv}.") is NOT within the range of $minLvl ~ $maxLvl! Kick them out!\n";
 		Commands::run("party kick ".$args->{user});
 	}
 	else
@@ -437,13 +445,48 @@ sub ai_pre_LEADER
 		my $minLevel = getPartyMinLevel();
 		my $maxLevel = $minLevel + 15;
 
-		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel, pm 'LFG' to #Global for invite", "#Global");
+		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel at ".$config{lockMap}.", pm 'LFG' to #Global for invite", "#Global");
 
 		# TODO: level range stuff
 
 		# we can Invite
 		#sendMessage($messageSender, "p", "sending a request to $name");
 		#Commands::run("party request $name");
+	}
+
+	# offline member check
+	if(timeOut($myTimeouts->{'offline_check'},OFFLINE_RECHECK))
+	{
+		print "~~~~~~ Checking for online / offline members....\n";
+
+		$myTimeouts->{'offline_check'} = time;
+
+		while(@offlineCheckList)
+		{
+			my $check = shift(@offlineCheckList);
+
+			print "Checking ID: ".$check."\n";
+
+			if($char->{'party'}{'users'}{$check} and !$char->{'party'}{'users'}{$check}{'online'})
+			{
+				# kick them
+				print $char->{'party'}{'users'}{$check}->{name}." has been offline for 2 minutes! Kick them out!\n";
+				Commands::run("party kick ".$char->{'party'}{'users'}{$check}->{name});
+			}
+		}
+
+		@offlineCheckList = ();
+
+		foreach (@partyUsersID) {
+			next if (!$_ || $_ eq $accountID);
+
+			if(!$char->{'party'}{'users'}{$_}{'online'})
+			{
+				# party member is offline. maybe we add them to a list to recheck?
+				print "       ".$char->{'party'}{'users'}{$_}->{name}." is offline, check them again in ".OFFLINE_RECHECK." seconds\n";
+				push @offlineCheckList, $_;
+			}
+		}
 	}
 }
 
