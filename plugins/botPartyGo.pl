@@ -116,11 +116,14 @@ my @offlineCheckList = ();
 =pod
 	### CONFIG SETTINGS ###
 
+	~~~ GENERAL ~~~
+	- botPartyGo [1] - enables the plugin
+
 	~~~ PARTY LEADER ~~~
-	- BPG_isPartyLeader - designates this character as the leader of a party
+	- BPG_isPartyLeader [0/1] - designates this character as the leader of a party
 
 	~~~ PARTY MEMBER ~~~
-	- BPG_isPartyMember - designates this character as the member of a party
+	- BPG_isPartyMember [0/1] - designates this character as the member of a party
 
 =cut
 
@@ -189,6 +192,8 @@ sub partyUsersInfo
 
 sub partyJoin
 {
+	return unless $config{"botPartyGo"};
+
 	my (undef,$args) = @_;
 
 	print "~~~~~~~~~~~~~~~~~~ Got here party join!\n";
@@ -276,6 +281,8 @@ sub checkPlayerCondition {
 
 sub npcMsg
 {
+	return unless $config{"botPartyGo"};
+
 	my (undef,$args) = @_;
 	my ($msg, $msg2, $ret, $name, $message);
 
@@ -328,6 +335,7 @@ sub npcMsg
 
 sub partyMsg
 {
+	return unless $config{"botPartyGo"};
 	#return 1 unless ($config{'botPartyGo'});
 
 	my ($var, $arg, $tmp) = @_;
@@ -361,6 +369,15 @@ sub partyMsg
 			#print "GOT THIS FAR\n";
 
 			sendMessage($messageSender, "p", "Level range is $minLevel ~ $maxLevel");
+		}
+
+		when("resupply")
+		{
+			# only the party leader can call for resupplying
+			continue unless $name eq getPartyLeaderName();
+			Commands::run("autobuy");
+			Commands::run("autosell");
+			Commands::run("autostorage");
 		}
 	}
 }
@@ -421,6 +438,7 @@ sub ai_pre
 	#return if !$char->{party}{joined};
 
 	return unless $field;
+	return unless $config{"botPartyGo"};
 
 	if($config{"BPG_isPartyLeader"})
 	{
@@ -607,6 +625,16 @@ sub checkForFollowing
 		sendMessage($messageSender, "p", "I'm following $followTarget now!");
 
 		last;
+	}
+}
+
+sub getPartyLeaderName
+{
+	# get the party leader's name
+	for (my $i = 0; $i < @partyUsersID; $i++) {
+		next if ($partyUsersID[$i] eq "");
+		next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
+		return $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
 	}
 }
 
