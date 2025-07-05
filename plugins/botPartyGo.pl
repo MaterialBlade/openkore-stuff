@@ -23,6 +23,7 @@ use constant {
 	BROADCAST_TIMEOUT => 120,
 	TRUE => 1,
 	FALSE => 0,
+ 	ANSWER_JOIN_ACCEPT => 2,
 };
 
 my $myTimeouts;
@@ -186,8 +187,18 @@ sub party_leave
 
 sub party_invite_result
 {
-	#my (undef,$args) = @_;
+	my (undef,$args) = @_;
+	my $type = $args->{type};
 	#print "~~~~~~~~~~~~~~~ Got here party_invite_result!\n";
+
+ 	# Trigger for when someone joins the party
+	my $name = $args->{name};
+	
+	if ($type == ANSWER_JOIN_ACCEPT)
+ 	{
+	message "[botPartyGo] Party invite accepted by $name\n", "success";
+ 	# TODO: Check level of new party member vs the level range?
+	}
 }
 
 sub partyUsersInfo
