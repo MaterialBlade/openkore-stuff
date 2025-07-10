@@ -27,7 +27,9 @@ use constant {
 };
 
 my $myTimeouts;
+my %partyStoredLevel;
 my @offlineCheckList = ();
+my $queueUpdatePartyRange = FALSE;
 
 #use Scalar::Util qw(looks_like_number);
 
@@ -175,21 +177,38 @@ sub on_reload {
 sub actor_info
 {
 	#my (undef,$args) = @_;
-	#print "~~~~~~~~~~~~~~~ Got here actor_info!\n";
+	print "~~~~~~~~~~~~~~~ Got here actor_info!\n";
 
 }
+
+=pod
+	PARTY JOIN WATERFALL
+
+	Got here partyUsersInfo!
+	Got here party join!
+	Got here party_invite_result!
+	Got here party_leave!
+
+=cut
 
 sub party_leave
 {
 	#my (undef,$args) = @_;
-	#print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
+	print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
+
+	return unless $config{"BPG_isPartyLeader"};
+
+	# have to queue this update to do it in ai_post, because updating in the actual reject packet sets the wrong levels
+	$queueUpdatePartyRange = TRUE;
 }
 
 sub party_invite_result
 {
+	return unless $config{"BPG_isPartyLeader"};
+
 	my (undef,$args) = @_;
 	my $type = $args->{type};
-	#print "~~~~~~~~~~~~~~~ Got here party_invite_result!\n";
+	print "~~~~~~~~~~~~~~~ Got here party_invite_result!\n";
 
  	# Trigger for when someone joins the party
 	my $name = $args->{name};
@@ -203,32 +222,54 @@ sub party_invite_result
 
 sub partyUsersInfo
 {
-	#my (undef,$args) = @_;
+	my (undef,$args) = @_;
 
-	#print "~~~~~~~~~~~~~~~ Got here partyUsersInfo!\n";
+	# keys => [qw(ID GID name map admin online jobID lv)],
+
+=pod
+          'playerInfo' => '·à▲ L☻ tutorial thief          morocc.gat        ♠ % DÅ▲ ²W☻ tutorial aco            morocc.gat      ☺☺♦ # ',
+          'party_name' => 'FieldPartyTest',
+          'len' => 136,
+          'RAW_MSG_SIZE' => 136,
+          'switch' => '0AE5',
+          'RAW_MSG' => 'σ
+ê FieldPartyTest          ·à▲ L☻ tutorial thief          morocc.gat        ♠ % DÅ▲ ²W☻ tutorial aco            morocc.gat      ☺☺♦ # ',
+          'KEYS' => [
+                      'len',
+                      'party_name',
+                      'playerInfo'
+                    ]
+=cut
+
+	print "~~~~~~~~~~~~~~~ Got here partyUsersInfo!\n";
 	#sendMessage($messageSender, "p", "partyUsersInfo got here!");
+
+	return unless $config{"BPG_isPartyLeader"};
+
+	#my $currentMin = getPartyLevelRangeMin();
+	#my $currentMax = getPartyLevelRangeMax();
+
+	print "~~~~~~~~ current min~max is ".$partyStoredLevel{min}."~".$partyStoredLevel{max}."\n";
+
+	#print Dumper($args->{playerInfo});
 }
 
 sub partyJoin
 {
 	return unless $config{"botPartyGo"};
+	return unless $config{"BPG_isPartyLeader"};
 
 	my (undef,$args) = @_;
 	return unless $char->{'party'}{'users'}{$args->{ID}};
 
 	print "~~~~~~~~~~~~~~~~~~ Got here party join!\n";
 
-	my $minLvl = getPartyMinLevel();
-	my $maxLvl = $minLvl + 15;
+	#my $minLvl = getPartyLevelRangeMin();
+	#my $maxLvl = getPartyLevelRangeMax();
 
-	# TODO: FIX THIS LEVEL GATE CHECK
-	# this doesn't quite work correctly since by the time we're checking to kick the player, the min level has already been adjust to THEIR level
-	# need to store the min level for recheck or something
-	# first pass (char not in party yet) store the level
-	# second pass (char is in party) we can check vs that stored level, then kick if necessary
+	my $minLvl = $partyStoredLevel{min};
+	my $maxLvl = $partyStoredLevel{max};
 
-	# also need to consider that lowest+15 doesn't always make the most sense. might be better to SAY the min/max level range
-	# dunno what the best way to communicate the level would be :s
 	if($args->{lv} < $minLvl || $args->{lv} > $maxLvl)
 	{
 		#outside of level range, kick their ass out
@@ -238,6 +279,7 @@ sub partyJoin
 	else
 	{
 		print $args->{user}."(".$args->{lv}.") is within the range of $minLvl ~ $maxLvl!\n";
+		UpdatePartyLevelRange();
 	}
 
 	#print Dumper($args);
@@ -391,12 +433,13 @@ sub partyMsg
 
 			#print Dumper($char->{party}{users});
 
-			my $minLevel = getPartyMinLevel();
-			my $maxLevel = $minLevel + 15;
+			my $maxLevel = getPartyLevelRangeMax();
+			#my $maxLevel = $minLevel + 15;
+			my $minLevel = getPartyLevelRangeMin();
 
 			#print "GOT THIS FAR\n";
 
-			sendMessage($messageSender, "p", "Level range is $minLevel ~ $maxLevel");
+			sendMessage($messageSender, "p", "Actual level range is $minLevel ~ $maxLevel");
 		}
 
 		when("resupply")
@@ -483,13 +526,23 @@ sub ai_pre_LEADER
 {
 	return unless ($char->{party}{joined});
 
+	if(!%partyStoredLevel)
+	{
+		print "Shits not stored yall!\n";
+
+		UpdatePartyLevelRange();
+	}
+
 	# check if there are empty party slots, if there are, send out a broadcast message
 	if(scalar(@partyUsersID) < 12 and timeOut($myTimeouts->{'broadcast_spam'},BROADCAST_TIMEOUT))
 	{
 		$myTimeouts->{'broadcast_spam'} = time;
 
-		my $minLevel = getPartyMinLevel();
-		my $maxLevel = $minLevel + 15;
+		#my $minLevel = getPartyMemberMinLevel();
+		#my $maxLevel = $minLevel + 15;
+
+		my $minLevel = getPartyLevelRangeMin();
+		my $maxLevel = getPartyLevelRangeMax();
 
 		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel at ".$config{lockMap}.", pm 'LFG' to #Global for invite", "#Global");
 
@@ -602,7 +655,7 @@ sub ai_pre_MEMBER
 	#                   'deltaHp' => 0
 	#                 }, 'Actor::Party' )
 
-sub getPartyMinLevel_new
+sub getPartyMemberMinLevel_new
 {
 	return 20;
 
@@ -611,26 +664,69 @@ sub getPartyMinLevel_new
 	# IF a newly added character is NOT in the correct range, kick them from the party
 }
 
-sub getPartyMinLevel
+	#my $maxLevel = getPartyMemberMinLevel() + 15;
+	#my $minLevel = getPartyMemberMaxLevel() - 15;
+
+sub getPartyLevelRangeMin
+{
+	return getPartyMemberMaxLevel() - 15;
+}
+
+sub getPartyMemberMinLevel
 {
 	#{lv}
 
 	my $minLvl = 100;
 
-	if(scalar(@partyUsersID) == 1)
-	{
-		# party leader is the only one in the party
-		$minLvl = $char->{lv} - 15;
-	}
-	else
-	{
+	#if(scalar(@partyUsersID) == 1)
+	#{
+	#	# party leader is the only one in the party
+	#	$minLvl = $char->{lv} - 15;
+	#}
+	#else
+	#{
 		# search for the lowest party member
 		for (my $i = 0; $i < @partyUsersID; $i++) {
 			$minLvl = $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} < $minLvl;
 		}
-	}
+	#}
 
 	return $minLvl;
+}
+
+sub getPartyLevelRangeMax
+{
+	return getPartyMemberMinLevel() + 15;
+}
+
+sub getPartyMemberMaxLevel
+{
+	#{lv}
+
+	my $maxLvl = 0;
+
+	#if(scalar(@partyUsersID) == 1)
+	#{
+	#	# party leader is the only one in the party
+	#	$maxLvl = $char->{lv} + 15;
+	#}
+	#else
+	#{
+		# search for the lowest party member
+		for (my $i = 0; $i < @partyUsersID; $i++) {
+			$maxLvl = $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} > $maxLvl;
+		}
+	#}
+
+	return $maxLvl;
+}
+
+sub UpdatePartyLevelRange
+{
+	$partyStoredLevel{min} = getPartyLevelRangeMin();
+	$partyStoredLevel{max} = getPartyLevelRangeMax();
+
+	print "[botPartyGo] New Party Level Range is ".$partyStoredLevel{min}."~".$partyStoredLevel{max}."\n";
 }
 
 sub checkForFollowing
@@ -673,7 +769,15 @@ sub isPartyLeader
 
 sub ai_post
 {
-	
+	# have to do this in post, because updating in the actual reject packet sets the wrong levels
+	if($queueUpdatePartyRange == TRUE)
+	{
+		UpdatePartyLevelRange();
+		undef $queueUpdatePartyRange;
+
+		# also force an update to the party share range
+		$timeout{ai_partyShareCheck}{time} = 0;
+	}
 }
 
 1;
