@@ -19,7 +19,8 @@ use feature "switch";
 Plugins::register("botPartyGo", "plugin for remote automatic party play", \&on_unload, \&on_reload);
 
 use constant {
-	OFFLINE_RECHECK => 20,
+	OFFLINE_RECHECK => 120, # 120s * 2 = 4 minutes for someone to reconnect
+	WEIGHT_RECHECK => 20,
 	BROADCAST_TIMEOUT => 120,
 	TRUE => 1,
 	FALSE => 0,
@@ -29,6 +30,7 @@ use constant {
 my $myTimeouts;
 my %partyStoredLevel;
 my @offlineCheckList = ();
+my $offlineCheckLeader = FALSE;
 my $queueUpdatePartyRange = FALSE;
 
 #use Scalar::Util qw(looks_like_number);
@@ -38,8 +40,10 @@ my $queueUpdatePartyRange = FALSE;
 === WHAT DOES THIS NEED TO WORK ===
 
 -- PARTY LEADER --
-	- PARTY LEADER ANNOUNCING OPEN PARTY (Global Chat)
+	- PARTY LEADER ANNOUNCING OPEN PARTY (Global Chat) // DONE
 	- PARTY LEADER MANAGE PARTY MEMBERS (invite / kick / etc)
+		-> invite //DONE
+		-> kick // still need to figure out how leveling up and breaking share range works
 
 -- PARTY MEMBER --
 	- PARTY MEMBERS IDLE STATE -> waiting for a party to join? (Maybe they hang out in pront when not in party)
@@ -51,13 +55,13 @@ my $queueUpdatePartyRange = FALSE;
 		-> if the party share settings aren't what you want, leave PARTY (optional)
 
 -- PARTY FUNCTIONALITY --
-	- RESUPPLY - Characters asking to go back to town for stuff, sell, storage
+	- RESUPPLY - Characters asking to go back to town for stuff, sell, storage // DONE (Kinda)
 	- NEED A WAY TO GROUP UP / ASK FOR SHUFFLE - when characters don't have a spot to move to
-	- LEVEL RANGE CHECK? -- devotion is 10 levels, xp share is 15 levels
+	- //DONE - LEVEL RANGE CHECK? -- devotion is 10 levels, xp share is 15 levels
 		-> party settings (set by leader)
 	- TIMEOUT FOR OFFLINE BEFORE KICKING / TIMEOUT FOR OFFLINE (LEADER) BEFORE LEAVING
-		-> if a party member is offline for too long, kick them
-		-> if party leader is offline for too long leave
+		-> if a party member is offline for too long, kick them // DONE
+		-> if party leader is offline for too long, leave
 	- PARTY ROLES?
 		-> tank, ranged-phys, priest, prof, other?
 
@@ -70,6 +74,7 @@ my $queueUpdatePartyRange = FALSE;
 		-> alternatively, instead of writing out the questions, use a QC (Question Code)
 
 -- PARTY PERFORMANCE / CONFIG --
+	- TODO: add a setting for if the party IS set to be shared XP or not. If it's not, we don't need to kick. TBD
 	- being able to cast buffs on certain allies
 	- casting Devotion on allies
 		-> not changing configuration files. being able to set it up beforehand and it just WORKS in the party
@@ -81,6 +86,9 @@ my $queueUpdatePartyRange = FALSE;
 	- Wizard Ice Wall
 		-> if a character uses Ice Wall they get kicked (maybe)
 	- If you're a super novice, you get kicked immediately
+
+	- when a party member levels up, have them say they leveled up so that the party range can be immediately updated
+		-> also if the share range is now broken, kick somebody (figure out who to kick... maybe the person who leveld?)
 
 	- not getting resurrected
 	- dying and getting left behind
@@ -386,13 +394,15 @@ sub npcMsg
 	given($message){
 
 		# someone is search for a party
-		when("LFG")
+		when($_ =~ /(LFG) (\d+)/)
 		{
 			# someone is LFG, if we're the party leader, do some stuff
 			if($config{"BPG_isPartyLeader"})
 			{
 				# STEP 1 - check if the party is full. If it's not, continue
-				if(scalar(@partyUsersID) < 12)
+				if(scalar(@partyUsersID) < 12
+					and $2 <= $partyStoredLevel{max}
+					and $2 >= $partyStoredLevel{min})
 				{
 					# we can Invite
 					sendMessage($messageSender, "p", "sending a request to $name");
@@ -544,7 +554,7 @@ sub ai_pre_LEADER
 		my $minLevel = getPartyLevelRangeMin();
 		my $maxLevel = getPartyLevelRangeMax();
 
-		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel at ".$config{lockMap}.", pm 'LFG' to #Global for invite", "#Global");
+		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite", "#Global");
 
 		# TODO: level range stuff
 
@@ -569,7 +579,7 @@ sub ai_pre_LEADER
 			if($char->{'party'}{'users'}{$check} and !$char->{'party'}{'users'}{$check}{'online'})
 			{
 				# kick them
-				print $char->{'party'}{'users'}{$check}->{name}." has been offline for 2 minutes! Kick them out!\n";
+				print $char->{'party'}{'users'}{$check}->{name}." has been offline for too long! Kick them out!\n";
 				Commands::run("party kick ".$char->{'party'}{'users'}{$check}->{name});
 			}
 		}
@@ -587,6 +597,9 @@ sub ai_pre_LEADER
 			}
 		}
 	}
+
+	# overweight or inventory full check
+	OverweightCheck();
 }
 
 # $char->{party}{joined}
@@ -601,7 +614,7 @@ sub ai_pre_MEMBER
 		$myTimeouts->{'request_spam'} = time;
 		# send out feelers
 
-		sendMessage($messageSender, "pm", "LFG", "#Global");
+		sendMessage($messageSender, "pm", "LFG ".$char->{lv}, "#Global");
 
 		if($config{"follow"} eq 0)
 		{
@@ -614,6 +627,47 @@ sub ai_pre_MEMBER
 		if($config{"follow"} eq 0)
 		{
 			checkForFollowing();
+		}
+
+		# overweight or inventory full check
+		OverweightCheck();
+
+		# offline LEADER check
+		if(timeOut($myTimeouts->{'offline_check'},OFFLINE_RECHECK))
+		{
+			print "~~~~~~ Checking for online / offline leader....\n";
+
+			$myTimeouts->{'offline_check'} = time;
+
+			# get the party leader's name
+			for (my $i = 0; $i < @partyUsersID; $i++) {
+				next if ($partyUsersID[$i] eq "");
+				next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
+
+				# check if this user is offline
+				if(!$char->{'party'}{'users'}{$partyUsersID[$i]}{'online'})
+				{
+					if($offlineCheckLeader == TRUE)
+					{
+						# party leader has been offline for too long, leave the Party
+						# TODO: handle leaving the party
+
+						# leaving the party! so long!!
+						print "Party leader has been offline for too long! Leaving party!\n";
+						Commands::run("party leave");
+					}
+					else
+					{
+						# they're offline, so we need to check again
+						$offlineCheckLeader = TRUE;
+					}
+				}
+				else
+				{
+					# party leader isn't offline anymore :D
+					$offlineCheckLeader = FALSE if $offlineCheckLeader == TRUE;
+				}
+			}
 		}
 	}
 }
@@ -654,6 +708,39 @@ sub ai_pre_MEMBER
 	#                   'onUpdate' => bless( [], 'CallbackList' ),
 	#                   'deltaHp' => 0
 	#                 }, 'Actor::Party' )
+
+
+# --- Party Member Status Check Stuff Starts Here ---
+sub OverweightCheck
+{
+	return unless timeOut($myTimeouts->{"weight_check"}, WEIGHT_RECHECK);
+	$myTimeouts->{"weight_check"} = time;
+
+	# check every Xs if the character is overweight
+	my $result = FALSE;
+
+	# if they ARE, send a party message to let the leader know
+	# TODO: Need to make this an option for the party leader? Maybe they don't always want to go back when overweight :\
+	if(percent_weight($char) >= 50)
+	{
+		$result = TRUE;
+	}
+	# this will also check if the characters inventory is full
+	elsif(scalar(@{$char->inventory}) eq 100)
+	{
+		# DANGER WILL ROBINSON
+		error "Inventory is maxed out! Ask for resupply!\n";
+		$result = TRUE;
+		#sendMessage($messageSender, "p", "My inventory is full!!!");
+	}
+
+	if($result == TRUE)
+	{
+		sendMessage($messageSender, "p", "I need to resupply!!!");
+	}
+}
+
+# --------------------------------------------
 
 sub getPartyMemberMinLevel_new
 {
