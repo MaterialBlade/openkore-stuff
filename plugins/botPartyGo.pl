@@ -133,9 +133,13 @@ my $queueUpdatePartyRange = FALSE;
 
 	~~~ PARTY LEADER ~~~
 	- BPG_isPartyLeader [0/1] - designates this character as the leader of a party
+	- BPG_maxLevelRange [#] - use this number instead of 15 for max level range. setting this to 10 will make sure DEVOTION will always work
 
 	~~~ PARTY MEMBER ~~~
 	- BPG_isPartyMember [0/1] - designates this character as the member of a party
+	- BPG_followTarget [name] - designates an OVERRIDE follow target. if this is not set, bot will follow the party leader
+	- BPG_minCountJoin [#] - don't join a party unless there is AT LEAST [#] empty slots // NOT IMPLEMENTED
+	- BPG_recheckTimeout [#] - override for rechecking offline party members or leader
 
 =cut
 
@@ -185,7 +189,7 @@ sub on_reload {
 sub actor_info
 {
 	#my (undef,$args) = @_;
-	print "~~~~~~~~~~~~~~~ Got here actor_info!\n";
+	#print "~~~~~~~~~~~~~~~ Got here actor_info!\n";
 
 }
 
@@ -202,7 +206,7 @@ sub actor_info
 sub party_leave
 {
 	#my (undef,$args) = @_;
-	print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
+	#print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
 
 	return unless $config{"BPG_isPartyLeader"};
 
@@ -410,6 +414,22 @@ sub npcMsg
 				}
 			}
 		}
+
+		# "Open Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite"
+		when($_ =~ /(Open Party )(\d+)(~)(\d+)(.*)(\d+)(\/)(\d+)(.*)/)
+		{
+			# $2 = min LEVEL
+			# $4 = max LEVEL
+			# $6 = current party count
+
+			if($config{"BPG_isPartyMember"})
+			{
+				if(!$char->{party}{joined} and $2 >= $char->{lv} and $4 <= $char->{lv})
+				{
+					$myTimeouts->{'request_spam'} = 0;
+				}
+			}
+		}
 	}
 }
 
@@ -450,6 +470,12 @@ sub partyMsg
 			#print "GOT THIS FAR\n";
 
 			sendMessage($messageSender, "p", "Actual level range is $minLevel ~ $maxLevel");
+		}
+
+		# I need to resupply!!!
+		when("I need to resupply!!!")
+		{
+			sendMessage($messageSender, "p", "resupply");
 		}
 
 		when("resupply")
@@ -553,8 +579,9 @@ sub ai_pre_LEADER
 
 		my $minLevel = getPartyLevelRangeMin();
 		my $maxLevel = getPartyLevelRangeMax();
+		my $partyCount = scalar(@partyUsersID);
 
-		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite", "#Global");
+		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite", "#Global");
 
 		# TODO: level range stuff
 
@@ -564,7 +591,8 @@ sub ai_pre_LEADER
 	}
 
 	# offline member check
-	if(timeOut($myTimeouts->{'offline_check'},OFFLINE_RECHECK))
+	my $recheck_time = $config{"BPG_recheckTimeout"} ? $config{"BPG_recheckTimeout"} : OFFLINE_RECHECK;
+	if(timeOut($myTimeouts->{'offline_check'}, $recheck_time))
 	{
 		print "~~~~~~ Checking for online / offline members....\n";
 
@@ -592,7 +620,7 @@ sub ai_pre_LEADER
 			if(!$char->{'party'}{'users'}{$_}{'online'})
 			{
 				# party member is offline. maybe we add them to a list to recheck?
-				print "       ".$char->{'party'}{'users'}{$_}->{name}." is offline, check them again in ".OFFLINE_RECHECK." seconds\n";
+				print "       ".$char->{'party'}{'users'}{$_}->{name}." is offline, check them again in ".$recheck_time." seconds\n";
 				push @offlineCheckList, $_;
 			}
 		}
@@ -600,6 +628,11 @@ sub ai_pre_LEADER
 
 	# overweight or inventory full check
 	OverweightCheck();
+}
+
+sub LEADER_memberQualityCheck
+{
+
 }
 
 # $char->{party}{joined}
@@ -616,7 +649,7 @@ sub ai_pre_MEMBER
 
 		sendMessage($messageSender, "pm", "LFG ".$char->{lv}, "#Global");
 
-		if($config{"follow"} eq 0)
+		if($config{"follow"} eq 1)
 		{
 			configModify("follow", 0); # MAYBE LEAVE THIS UP TO THE USER????
 		}
@@ -633,7 +666,8 @@ sub ai_pre_MEMBER
 		OverweightCheck();
 
 		# offline LEADER check
-		if(timeOut($myTimeouts->{'offline_check'},OFFLINE_RECHECK))
+		my $recheck_time = $config{"BPG_recheckTimeout"} ? $config{"BPG_recheckTimeout"} : OFFLINE_RECHECK;
+		if(timeOut($myTimeouts->{'offline_check'},$recheck_time))
 		{
 			print "~~~~~~ Checking for online / offline leader....\n";
 
@@ -670,6 +704,14 @@ sub ai_pre_MEMBER
 			}
 		}
 	}
+}
+
+sub MEMBER_partyQualityCheck
+{
+	#	- PARTY QUALITY CHECK?
+	#	-> if you're dying too often, leave PARTY (optional)
+	#	-> if you aren't going anywhere (same map), leave PARTY (optional)
+	#	-> if the party share settings aren't what you want, leave PARTY (optional)
 }
 
 	#'DÅ▲ ' => bless( {
@@ -756,7 +798,8 @@ sub getPartyMemberMinLevel_new
 
 sub getPartyLevelRangeMin
 {
-	return getPartyMemberMaxLevel() - 15;
+	my $diff = $config{"BPG_maxLevelRange"} ? $config{"BPG_maxLevelRange"} : 15;
+	return getPartyMemberMaxLevel() - $diff;
 }
 
 sub getPartyMemberMinLevel
@@ -783,7 +826,8 @@ sub getPartyMemberMinLevel
 
 sub getPartyLevelRangeMax
 {
-	return getPartyMemberMinLevel() + 15;
+	my $diff = $config{"BPG_maxLevelRange"} ? $config{"BPG_maxLevelRange"} : 15;
+	return getPartyMemberMinLevel() + $diff;
 }
 
 sub getPartyMemberMaxLevel
@@ -823,19 +867,29 @@ sub checkForFollowing
 
 	my $followTarget = "";
 
-	# get the party leader's name
-	for (my $i = 0; $i < @partyUsersID; $i++) {
-		next if ($partyUsersID[$i] eq "");
-		next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
-
-		$followTarget = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
-
+	# if we have an override follow target, use that
+	if($config{"BPG_followTarget"})
+	{
 		configModify("follow", 1);
 		configModify("followTarget", $followTarget);
+	}
+	# otherwise use the party leader
+	else
+	{
+		# get the party leader's name
+		for (my $i = 0; $i < @partyUsersID; $i++) {
+			next if ($partyUsersID[$i] eq "");
+			next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
 
-		sendMessage($messageSender, "p", "I'm following $followTarget now!");
+			$followTarget = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
 
-		last;
+			configModify("follow", 1);
+			configModify("followTarget", $followTarget);
+
+			sendMessage($messageSender, "p", "I'm following $followTarget now!");
+
+			last;
+		}
 	}
 }
 
