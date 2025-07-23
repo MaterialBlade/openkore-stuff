@@ -123,6 +123,48 @@ my $queueUpdatePartyRange = FALSE;
 
 	- Accept party invite (this should be a conf setting, not plugin dependant)
 
+	~~~ TODO ~~~
+	- // DONE
+	- add a list of available maps the leader is willing to go to. if the list is empty, then the leader defaults to the lockMap
+		=> party leader has a list
+		=> party members (a user) can request to see the list
+		=> party members (a user) can request a map change
+		=> BPG_mapList moc_fild11, xmas_dun02, pay_fild02
+
+	// DONE
+	- also allow people to request a map list. maybe put a maximum? or figure out how to split the message into multiple messages
+
+	// DONE
+	- also add a list of characters who shouldn't be kicked (permanent members)
+		=> BPG_dontKickMembers tutorial thief, tutorial aco, Storm Cursed Slasher
+
+	- keep a list (array) of players in the party. when a new person gets added they get added to either the end or the beginning. when party level is out or range, kick whoever the newest person is. loop that until share range is restored
+
+	// DONE
+	- consider having a way to have characters follow another character... so they're not always following melee characters?
+		-> BPG_followClass [Archer, Priest, Wizard, Professor, Knight, Crusader, etc]
+		-> then when this character joins a party it will go down the list looking for that class to follow behind. If there aren't any of the preferred classes, follow the leader
+
+	- consider adding class codes to LFG messages in addition to levels (optional)
+		- this might be getting too complicated, but the partyLeader could be looking for certain classes to add to the party :grimace:
+
+	- consider enforcing autoloot rates
+
+	- add a command to ask where party/party member is (if they don't get X/Y updates for map)
+		=> then route to it
+
+	- if i want my specific party members to stick together, how do i achieve that?
+	- need to how parties are joined. just saying LFG in the Global chat isn't good enough since parties would be fighting for party members which doesn't make sense
+
+	-- UPDATE PARTY JOINING FLOW (why did I want this again?)
+	- Party Leader broadcasts on #Global
+	- Party Member CATCHES the message, pms the Leader with their Level
+	- Party Leader invites
+
+	- Party Member broadcasts LFP on #Global
+	- Party Leader CATCHES the message, invites the member
+
+
 =cut
 
 =pod
@@ -134,12 +176,15 @@ my $queueUpdatePartyRange = FALSE;
 	~~~ PARTY LEADER ~~~
 	- BPG_isPartyLeader [0/1] - designates this character as the leader of a party
 	- BPG_maxLevelRange [#] - use this number instead of 15 for max level range. setting this to 10 will make sure DEVOTION will always work
+	- BPG_mapList [list of map names] - list of maps the party leader is willing to go to. if this isn't set, then don't use it
+	- BPG_dontKickMembers [list of player name] - skips over these players when looking for offline users to kick
 
 	~~~ PARTY MEMBER ~~~
 	- BPG_isPartyMember [0/1] - designates this character as the member of a party
 	- BPG_followTarget [name] - designates an OVERRIDE follow target. if this is not set, bot will follow the party leader
 	- BPG_minCountJoin [#] - don't join a party unless there is AT LEAST [#] empty slots // NOT IMPLEMENTED
 	- BPG_recheckTimeout [#] - override for rechecking offline party members or leader
+	- BPG_followClass [Archer, Priest, Wizard, Professor, Knight, Crusader, etc] - when this character joins a party it will go down the list looking for that class to follow behind. If there aren't any of the preferred classes, follow the leader
 
 =cut
 
@@ -459,6 +504,24 @@ sub partyMsg
 		{
 			continue unless isPartyLeader();
 
+			if($config{"BPG_followClass"})
+			{
+				# split the followClass into a list
+				my $tmp_string = $config{"BPG_followClass"};
+				$tmp_string =~ tr/ //ds;
+
+				print "temp string: $tmp_string \n";
+
+				my @desired_classes = split(/,/,$tmp_string);
+
+
+				print "Checking to see if this trims spaces or not\n";
+				print Dumper(@desired_classes);
+			}
+
+
+			continue;
+
 			$messageSender->sendEmotion(0); # !
 
 			#print Dumper($char->{party}{users});
@@ -485,6 +548,28 @@ sub partyMsg
 			Commands::run("autobuy");
 			Commands::run("autosell");
 			Commands::run("autostorage");
+		}
+
+		when("say map list")
+		{
+			continue unless isPartyLeader();
+			if($config{"BPG_mapList"})
+			{
+				sendMessage($messageSender, "p", "available maps: ".$config{"BPG_mapList"});
+			}
+		}
+
+		when($_ =~ /(change map )(.*)/)
+		{
+			if(existsInList($config{'BPG_mapList'}, $2))
+			{
+				configModify("lockMap", $2);
+				sendMessage($messageSender, "p", "Changing maps to $2");
+			}
+			else
+			{
+				sendMessage($messageSender, "p", "Nope! Not goin there");
+			}
 		}
 	}
 }
@@ -616,6 +701,9 @@ sub ai_pre_LEADER
 
 		foreach (@partyUsersID) {
 			next if (!$_ || $_ eq $accountID);
+
+			# BPG_dontKickMembers
+			next if (existsInList($config{'BPG_dontKickMembers'}, $char->{'party'}{'users'}{$_}->{name}));
 
 			if(!$char->{'party'}{'users'}{$_}{'online'})
 			{
@@ -817,6 +905,7 @@ sub getPartyMemberMinLevel
 	#{
 		# search for the lowest party member
 		for (my $i = 0; $i < @partyUsersID; $i++) {
+			next if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} == 0;
 			$minLvl = $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} < $minLvl;
 		}
 	#}
@@ -845,6 +934,7 @@ sub getPartyMemberMaxLevel
 	#{
 		# search for the lowest party member
 		for (my $i = 0; $i < @partyUsersID; $i++) {
+			next if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} == 0;
 			$maxLvl = $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} if $char->{'party'}{'users'}{$partyUsersID[$i]}{'lv'} > $maxLvl;
 		}
 	#}
@@ -872,24 +962,77 @@ sub checkForFollowing
 	{
 		configModify("follow", 1);
 		configModify("followTarget", $followTarget);
+
+		return;
 	}
-	# otherwise use the party leader
-	else
+	# they have a preferred class to follow
+	elsif($config{"BPG_followClass"})
 	{
-		# get the party leader's name
-		for (my $i = 0; $i < @partyUsersID; $i++) {
-			next if ($partyUsersID[$i] eq "");
-			next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
+		# split the followClass into a list
+		my $tmp_string = $config{"BPG_followClass"};
+		#$tmp_string =~ tr/, //ds;
 
-			$followTarget = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+		my @desired_classes = split(/,/,$tmp_string);
 
-			configModify("follow", 1);
-			configModify("followTarget", $followTarget);
+		# trim it, just in case the user fucked up and there are spaces
 
-			sendMessage($messageSender, "p", "I'm following $followTarget now!");
+		print "Checking to see if this trims spaces or not\n";
+		print Dumper(@desired_classes);
 
-			last;
+		# my @splitPos = split(/:/,$huntingTarget->{"lastSeenPos"});
+
+		# check for desired job class to follow
+		# if ($config{$prefix . "_isJob"}) { return 0 unless (existsInList($config{$prefix . "_isJob"}, $jobs_lut{$player->{jobID}})); }
+
+		# do a pass through all the party members, keeping track of their job (class)
+
+		# do multi-pass based on priority.
+
+		while(@desired_classes)
+		{
+			my $curr_class_check = shift(@desired_classes);
+			$curr_class_check =~ s/^\s+//; # trim left side spaces, fuck it
+
+			print "Follow Check: Class check for $curr_class_check \n";
+
+			# VERSION 1: multi-pass, because I'm lazy
+			for (my $i = 0; $i < @partyUsersID; $i++) {
+				next if ($partyUsersID[$i] eq ""); # skip if it's me. can't follow myself
+
+				# don't follow them if they're offline :x
+				next if !$char->{'party'}{'users'}{$partyUsersID[$i]}{'online'};
+
+				# check for jobID
+				print "Follow Check: Checking ".$jobs_lut{$char->{'party'}{'users'}{$partyUsersID[$i]}{'jobID'}}." vs ".$curr_class_check."\n";
+				next unless ($jobs_lut{$char->{'party'}{'users'}{$partyUsersID[$i]}{'jobID'}} eq $curr_class_check);
+
+				$followTarget = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+		
+				configModify("follow", 1);
+				configModify("followTarget", $followTarget);
+		
+				sendMessage($messageSender, "p", "I'm following $followTarget now!");
+		
+				return;
+			}
 		}
+	}
+
+
+	# otherwise use the party leader
+	# get the party leader's name
+	for (my $i = 0; $i < @partyUsersID; $i++) {
+		next if ($partyUsersID[$i] eq "");
+		next unless ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'});
+
+		$followTarget = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+
+		configModify("follow", 1);
+		configModify("followTarget", $followTarget);
+
+		sendMessage($messageSender, "p", "I'm following $followTarget now!");
+
+		last;
 	}
 }
 
