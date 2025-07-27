@@ -22,6 +22,7 @@ use constant {
 	OFFLINE_RECHECK => 120, # 120s * 2 = 4 minutes for someone to reconnect
 	WEIGHT_RECHECK => 20,
 	BROADCAST_TIMEOUT => 120,
+	RESUPPLY_TIMEOUT => 500,
 	TRUE => 1,
 	FALSE => 0,
  	ANSWER_JOIN_ACCEPT => 2,
@@ -145,6 +146,7 @@ my $queueUpdatePartyRange = FALSE;
 		-> BPG_followClass [Archer, Priest, Wizard, Professor, Knight, Crusader, etc]
 		-> then when this character joins a party it will go down the list looking for that class to follow behind. If there aren't any of the preferred classes, follow the leader
 
+	// DONE
 	- consider adding class codes to LFG messages in addition to levels (optional)
 		- this might be getting too complicated, but the partyLeader could be looking for certain classes to add to the party :grimace:
 
@@ -155,6 +157,9 @@ my $queueUpdatePartyRange = FALSE;
 
 	- if i want my specific party members to stick together, how do i achieve that?
 	- need to how parties are joined. just saying LFG in the Global chat isn't good enough since parties would be fighting for party members which doesn't make sense
+
+	- add an (optional) whitelist for which characters are allowed to join the party
+	- add an (optional) blacklist to ban certain characters from joining the party
 
 	-- UPDATE PARTY JOINING FLOW (why did I want this again?)
 	- Party Leader broadcasts on #Global
@@ -201,6 +206,8 @@ my $aiHook = Plugins::addHooks(
 	["packet_pre/party_invite_result", \&party_invite_result, undef],
 	["packet_pre/party_leave", \&party_leave, undef],
 	["packet_pre/actor_info", \&actor_info, undef],
+
+	['Network::Receive::map_changed', \&changedMap, undef],
 
 	#Plugins::callHook('npc_chat', {
 	#['monster_disappeared', \&monsterDisappeared, undef],
@@ -254,6 +261,9 @@ sub party_leave
 	#print "~~~~~~~~~~~~~~~ Got here party_leave!\n";
 
 	return unless $config{"BPG_isPartyLeader"};
+
+	# Speech Off
+	Utils::Win32::playSound('C:\Windows\Media\Speech off.wav');
 
 	# have to queue this update to do it in ai_post, because updating in the actual reject packet sets the wrong levels
 	$queueUpdatePartyRange = TRUE;
@@ -320,6 +330,11 @@ sub partyJoin
 	return unless $char->{'party'}{'users'}{$args->{ID}};
 
 	print "~~~~~~~~~~~~~~~~~~ Got here party join!\n";
+
+	# Speech On
+	#Win32::Sound::Volume('50%');
+	Utils::Win32::playSound('C:\Windows\Media\Speech On.wav');
+	#Win32::Sound::Play("SystemStart", SND_ALIAS);
 
 	#my $minLvl = getPartyLevelRangeMin();
 	#my $maxLvl = getPartyLevelRangeMax();
@@ -538,6 +553,11 @@ sub partyMsg
 		# I need to resupply!!!
 		when("I need to resupply!!!")
 		{
+			continue unless isPartyLeader();
+			continue unless timeOut($myTimeouts->{'resupply'},RESUPPLY_TIMEOUT);
+
+			$myTimeouts->{'resupply'} = time;
+
 			sendMessage($messageSender, "p", "resupply");
 		}
 
@@ -545,12 +565,15 @@ sub partyMsg
 		{
 			# only the party leader can call for resupplying
 			continue unless $name eq getPartyLeaderName();
-			Commands::run("autobuy");
-			Commands::run("autosell");
-			Commands::run("autostorage");
+			unless($config{"BPG_dontResupply"})
+			{
+				Commands::run("autobuy");
+				Commands::run("autosell");
+				Commands::run("autostorage");
+			}
 		}
 
-		when("say map list")
+		when($_ =~ /map list/)
 		{
 			continue unless isPartyLeader();
 			if($config{"BPG_mapList"})
@@ -851,7 +874,10 @@ sub OverweightCheck
 
 	# if they ARE, send a party message to let the leader know
 	# TODO: Need to make this an option for the party leader? Maybe they don't always want to go back when overweight :\
-	if(percent_weight($char) >= 50)
+
+	my $ow = $config{"BPG_overweight"} ? $config{"BPG_overweight"} : 50;
+
+	if(percent_weight($char) >= $ow)
 	{
 		$result = TRUE;
 	}
@@ -887,7 +913,8 @@ sub getPartyMemberMinLevel_new
 sub getPartyLevelRangeMin
 {
 	my $diff = $config{"BPG_maxLevelRange"} ? $config{"BPG_maxLevelRange"} : 15;
-	return getPartyMemberMaxLevel() - $diff;
+	my $ret = (getPartyMemberMaxLevel() - $diff) > 1 ? getPartyMemberMaxLevel() - $diff : 1;
+	return $ret;
 }
 
 sub getPartyMemberMinLevel
@@ -916,7 +943,8 @@ sub getPartyMemberMinLevel
 sub getPartyLevelRangeMax
 {
 	my $diff = $config{"BPG_maxLevelRange"} ? $config{"BPG_maxLevelRange"} : 15;
-	return getPartyMemberMinLevel() + $diff;
+	my $ret = (getPartyMemberMinLevel() + $diff) < 99 ? getPartyMemberMinLevel() + $diff : 99;
+	return $ret;
 }
 
 sub getPartyMemberMaxLevel
