@@ -26,6 +26,8 @@ use constant {
 	TRUE => 1,
 	FALSE => 0,
  	ANSWER_JOIN_ACCEPT => 2,
+	SHUFFLE_TIMEOUT => 2,
+	LOST_REQUEST_TIMEOUT => 6,
 };
 
 my $myTimeouts;
@@ -209,6 +211,8 @@ my $aiHook = Plugins::addHooks(
 
 	['Network::Receive::map_changed', \&changedMap, undef],
 
+	['Network::Receive::map_changed',       \&checkConfig, undef],
+
 	#Plugins::callHook('npc_chat', {
 	#['monster_disappeared', \&monsterDisappeared, undef],
 	#['checkPlayerCondition', \&checkPlayerCondition, undef],
@@ -220,11 +224,23 @@ my $aiHook = Plugins::addHooks(
 
 my $commands_handle = Commands::register(
 	#['setflag', 'sets the entered flag and value', \&setFlag],
+	['DC', 'dumps config to a file', \&dumpConfig],
+	['inject', 'injects commands into the config', \&injectConfig],
 );
+
+sub checkConfig {
+	unless($config{"botPartyGo"})
+	{
+		warning "[botPartyGo] Config setting 'botPartyGo' not set. Plugin disabled.\n";
+		Commands::run('plugin unload botPartyGo');
+	}
+}
 
 sub on_unload {
 	# This plugin is about to be unloaded; remove hooks
+	message "[botPartyGo] Plugin unloading\n", "system";
 	Plugins::delHook($aiHook);
+	Commands::unregister($commands_handle);
 }
 
 sub on_reload {
@@ -458,8 +474,12 @@ sub npcMsg
 	given($message){
 
 		# someone is search for a party
-		when($_ =~ /(LFG) (\d+)/)
+		when($_ =~ /(LFG) (\d+) (.*)/)
 		{
+			print "[botPartyGo] someone is looking for a party! Their class is ".$3."\n";
+
+			# TODO: have a list of classes you want to invite
+
 			# someone is LFG, if we're the party leader, do some stuff
 			if($config{"BPG_isPartyLeader"})
 			{
@@ -567,9 +587,56 @@ sub partyMsg
 			continue unless $name eq getPartyLeaderName();
 			unless($config{"BPG_dontResupply"})
 			{
-				Commands::run("autobuy");
 				Commands::run("autosell");
+				Commands::run("autobuy");
 				Commands::run("autostorage");
+			}
+		}
+
+		when ($_ =~ /(\w+) (follow) (\w+)/){
+			continue unless $name eq getPartyLeaderName();
+
+			my ($name2) = $3;
+			my $arg1;
+			continue unless ($char->{name} =~ m/$1/i);
+			
+			if($name2 eq "me"){
+				($arg1) = $name;
+			} else {
+				($arg1) = $name2;
+				for (my $i = 0; $i < @partyUsersID; $i++) {
+					next if ($partyUsersID[$i] eq "");
+					#next unless $char->{'party'}{'users'}{$partyUsersID[$i]}{'online'};
+					#print $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'} . "\n";
+					
+					#if($npc->{'name'} =~ m/Kafra Employee/i)
+					#my $tempName = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+
+
+					if ($char->{'party'}{'users'}{$partyUsersID[$i]}{'name'} =~ m/$name2/i){
+
+						if($char->{'party'}{'users'}{$partyUsersID[$i]}{'online'})
+						{
+							# Translation Comment: Is the party user on list online?
+							($arg1) = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+
+							my $newFollow = $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+
+							configModify("follow", 1);
+							configModify("followTarget", $newFollow);
+							AI::clear("follow");
+
+							sendMessage($messageSender, "p", "I am now following $newFollow");
+
+							last;
+						}
+						else
+						{
+							sendMessage($messageSender, "p", $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'}." is offline!");
+							last;
+						}
+					}
+				}
 			}
 		}
 
@@ -664,6 +731,40 @@ sub ai_pre
 	{
 		ai_pre_MEMBER();
 	}
+
+=pod
+	if(AI::action ne "route" and timeOut($myTimeouts->{'shuffle_move'},SHUFFLE_TIMEOUT))
+	{
+		#print "Got here! 1\n";
+
+		# if(ai_getAggressives(undef, 1) > 2){
+		#if(1 == 2)
+
+		if(scalar(ai_getAggressives(1,1)) < 1)
+		{
+			#print "Got here 2!\n";
+			$myTimeouts->{'shuffle_move'} = time;
+
+			stand() if $char->{sitting};
+			my @stand = calcRectArea2($char->{pos}{x}, $char->{pos}{y},2,0);
+			my $i = int(rand @stand);
+			my $spot = $stand[$i];
+
+			if(!positionNearPortal($spot, 3))
+			{
+				ai_route(
+					$field->baseName,
+					$spot->{x},
+					$spot->{y},
+					maxRouteTime => $config{route_randomWalk_maxRouteTime},
+					attackOnRoute => 2,
+				);
+			}
+
+			$myTimeouts->{'shuffle_move'} = time;
+		}
+	}
+=cut
 }
 
 sub ai_pre_LEADER
@@ -750,15 +851,21 @@ sub LEADER_memberQualityCheck
 # ($char->{'party'}{'users'}{$partyUsersID[$i]}{'admin'})
 # if (!$net || $net->getState() != Network::IN_GAME) {
 
+#($char->{party}{share}) ? T("Even") : T("Individual"),
+#($char->{party}{itemPickup}) ? T("Even") : T("Individual"),
+#($char->{party}{itemDivision}) ? T("Even") : T("Individual"));
+
 sub ai_pre_MEMBER
 {
+	#print Dumper($args);
+
 	# check if you're in a party, if you're not, send out some feelers for open parties
 	if(!$char->{party}{joined} && timeOut($myTimeouts->{'request_spam'},60))
 	{
 		$myTimeouts->{'request_spam'} = time;
 		# send out feelers
 
-		sendMessage($messageSender, "pm", "LFG ".$char->{lv}, "#Global");
+		sendMessage($messageSender, "pm", "LFG ".$char->{lv}." ".$jobs_lut{$char->{jobID}}, "#Global");
 
 		if($config{"follow"} eq 1)
 		{
@@ -775,6 +882,21 @@ sub ai_pre_MEMBER
 
 		# overweight or inventory full check
 		OverweightCheck();
+
+		# check party settings. if it's not what we want we leave!
+		if($config{"BPG_shareItems"} and ($char->{party}{itemPickup} == 0 || $char->{party}{itemDivision} == 0))
+		{
+			sendMessage($messageSender, "p", "Sorry, I want item share!");
+			#Commands::run("party leave");
+			leaveParty();
+		}
+
+		if($config{"BPG_shareEXP"} and $char->{party}{share} == 0)
+		{
+			sendMessage($messageSender, "p", "Sorry, I want exp share!");
+			#Commands::run("party leave");
+			leaveParty();
+		}
 
 		# offline LEADER check
 		my $recheck_time = $config{"BPG_recheckTimeout"} ? $config{"BPG_recheckTimeout"} : OFFLINE_RECHECK;
@@ -799,7 +921,8 @@ sub ai_pre_MEMBER
 
 						# leaving the party! so long!!
 						print "Party leader has been offline for too long! Leaving party!\n";
-						Commands::run("party leave");
+						#Commands::run("party leave");
+						leaveParty();
 					}
 					else
 					{
@@ -814,6 +937,21 @@ sub ai_pre_MEMBER
 				}
 			}
 		}
+=pod
+		if(AI::action eq "follow")
+		{
+			if(defined $args->{ID}
+			and $args->{'ai_follow_lost_end'}
+			and !($args->{'following'})
+			and !($args->{'ai_follow_lost_char_last_pos'})
+			and timeOut($myTimeouts->{'search_for_followTarget'},LOST_REQUEST_TIMEOUT))
+			{
+				$myTimeouts->{'search_for_followTarget'} = time;
+				sendMessage($messageSender, "p", "Shuffle?");
+			}
+
+		}
+=cut
 	}
 }
 
@@ -1025,7 +1163,8 @@ sub checkForFollowing
 
 			# VERSION 1: multi-pass, because I'm lazy
 			for (my $i = 0; $i < @partyUsersID; $i++) {
-				next if ($partyUsersID[$i] eq ""); # skip if it's me. can't follow myself
+				next if ($partyUsersID[$i] eq "");
+				next if $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'} eq $char->{name}; # skip if it's me. can't follow myself
 
 				# don't follow them if they're offline :x
 				next if !$char->{'party'}{'users'}{$partyUsersID[$i]}{'online'};
@@ -1090,6 +1229,93 @@ sub ai_post
 		# also force an update to the party share range
 		$timeout{ai_partyShareCheck}{time} = 0;
 	}
+}
+
+sub changedMap
+{
+	if($field)
+	{
+		sendMessage($messageSender, "c", "\@autoloot 100");
+	}
+}
+
+sub leaveParty
+{
+	# leave the party and reset a bunch of stuff
+	# might have to move this to a "delayed" function or something
+
+	Commands::run("party leave");
+
+	# reset timers and leaders and whatever
+	configModify("followTarget", "");
+	#configModify("follow", 0);
+
+	$offlineCheckLeader == FALSE;
+	@offlineCheckList = ();
+}
+
+sub injectConfig
+{
+=pod
+	for (my $i = 0; exists $config{"partySkill_$i"}; $i++) {
+
+	}
+	$config{"partySkill_$i"."_notPartyOnly"}
+=cut
+
+	my $selfSkillIndex = 0;
+	for (my $i = 0; exists $config{"useSelf_skill_$i"}; $i++) {
+		$selfSkillIndex = $i;
+	}
+	$selfSkillIndex++;
+	
+	$config{"useSelf_skill_$selfSkillIndex"} = "Cloaking";
+	$config{"useSelf_skill_$selfSkillIndex"."_whenStatusInactive"} = "Cloaking";
+	$config{"useSelf_skill_$selfSkillIndex"."_timeout"} = 10;
+	$config{"useSelf_skill_$selfSkillIndex"."_notInTown"} = 1;
+	$config{"useSelf_skill_$selfSkillIndex"."_partyAggressives"} = "< 1";
+	$config{"useSelf_skill_$selfSkillIndex"."_sp"} = "> 20";
+
+	#useSelf_skill_0_partyAggressives
+
+=pod
+ 'useSelf_skill_1' => 'Defender',
+ 'useSelf_skill_1_whenStatusInactive' => 'Defending Aura',
+ 'useSelf_skill_1_whenFlag' => 'DefendHellJudgement',
+ 'useSelf_skill_1_disabled' => '0',
+ 'useSelf_skill_1_extraNotWhenAllFlags' => 'DevotionDelay, Repositioning',
+
+=cut
+
+
+	my $doCommandIndex = 0;
+
+	for (my $i = 0; exists $config{"doCommand_$i"}; $i++) {
+		$doCommandIndex = $i;
+	}
+	$doCommandIndex++;
+
+	print "[botPartyGo] Injecting new 'doCommand' at idx $doCommandIndex \n";
+
+	$config{"doCommand_$doCommandIndex"} = "p CLOAKING TIME!!";
+	$config{"doCommand_$doCommandIndex"."_notInTown"} = 1;
+	$config{"doCommand_$doCommandIndex"."_timeout"} = 10;
+	$config{"doCommand_$doCommandIndex"."_whenStatusActive"} = "Cloaking";
+
+
+}
+
+sub dumpConfig
+{
+	# Open a file for writing
+	my $filename = 'dump_output.txt';
+	open my $fh, '>', $filename or die "Cannot open $filename: $!";
+
+	# Print the Dumper output to the file handle
+	print $fh Dumper(\%config);
+
+	# Close the file handle
+	close $fh;
 }
 
 1;
