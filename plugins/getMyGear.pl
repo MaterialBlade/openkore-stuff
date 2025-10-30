@@ -5,7 +5,6 @@
 # When returning to town, the bot will auto-equip their default gear if it isn't equipped
 # If the items are added to storage, they will be taken out
 # If the gear is broken, the items won't be added to storage
-# The intention is to spent a designated amount of time in a map before moving to the next one.
 #
 # CONFIGURATION
 # Add this line to config.txt:
