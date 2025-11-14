@@ -74,6 +74,7 @@ my $loghook = Log::addHook(\&consoleCheckWrapper);
 
 =pod
 	TODO:
+		- add a getMyGear_inMap config for the maps to do it, rather than being hardcoded
 		- add something for item control for the BROKEN versions of these items, just in case // DONE? Not tested
 
 		- BIGGER TODO: make a big getAuto block to get the gear in this list from STORAGE // DONE
@@ -93,6 +94,7 @@ my $loghook = Log::addHook(\&consoleCheckWrapper);
 sub on_unload {
 	# This plugin is about to be unloaded; remove hooks
 	Plugins::delHook($aiHook);
+	Log::delHook($loghook);
 	Commands::unregister($commands_handle);
 }
 
@@ -119,12 +121,14 @@ sub on_configModify
 
 sub consoleCheckWrapper
 {
-	return unless $_[1] =~ /^(?:parseConfigFile)$/;
-	$injected = FALSE;
+	return unless $_[1] eq "console";
+	return unless $_[4] =~ /(.*config.txt.*)/gi;
+	return unless $_[7] eq "Settings::loadByHandle";
 	return unless $config{'getMyGear'} == 1;
+	$injected = FALSE;
 
 	message "Config reloaded!!! :3\n", "success";
-	inject(); # re-inject it
+	#inject(); # re-inject it
 }
 
 sub test_cmd
