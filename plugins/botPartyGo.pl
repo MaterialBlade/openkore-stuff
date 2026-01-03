@@ -127,6 +127,12 @@ my $queueUpdatePartyRange = FALSE;
 	- Accept party invite (this should be a conf setting, not plugin dependant)
 
 	~~~ TODO ~~~
+	- add a max zeny lost check somewhere... don't want to drain your bank
+		-> manage a blacklist to not rejoin bad parties
+	- (leader) send invites when someone PMs you their
+	- (leader) add a conf thing for setting XP to shared by default, add an option for disabling it
+	- (member) send PM requestions
+
 	- // DONE
 	- add a list of available maps the leader is willing to go to. if the list is empty, then the leader defaults to the lockMap
 		=> party leader has a list
@@ -185,6 +191,7 @@ my $queueUpdatePartyRange = FALSE;
 	- BPG_maxLevelRange [#] - use this number instead of 15 for max level range. setting this to 10 will make sure DEVOTION will always work
 	- BPG_mapList [list of map names] - list of maps the party leader is willing to go to. if this isn't set, then don't use it
 	- BPG_dontKickMembers [list of player name] - skips over these players when looking for offline users to kick
+	- BPG_desiredClasses [list of class names] - if you're looking to recruit specific classes // NOT IMPLEMENTED
 
 	~~~ PARTY MEMBER ~~~
 	- BPG_isPartyMember [0/1] - designates this character as the member of a party
@@ -192,7 +199,8 @@ my $queueUpdatePartyRange = FALSE;
 	- BPG_minCountJoin [#] - don't join a party unless there is AT LEAST [#] empty slots // NOT IMPLEMENTED
 	- BPG_recheckTimeout [#] - override for rechecking offline party members or leader
 	- BPG_followClass [Archer, Priest, Wizard, Professor, Knight, Crusader, etc] - when this character joins a party it will go down the list looking for that class to follow behind. If there aren't any of the preferred classes, follow the leader
-
+	- BPG_dontAskPM [0/1] - set to 1 to disable the bot requesting party joins via PM (this is the only way to join)
+	- BPG_dontOverrideExpShare [0/1] - set to 1 to disable overriding the config's EXP share setting. if not set it will always try to EXP share
 =cut
 
 my $aiHook = Plugins::addHooks(
@@ -208,6 +216,7 @@ my $aiHook = Plugins::addHooks(
 	["packet_pre/party_invite_result", \&party_invite_result, undef],
 	["packet_pre/party_leave", \&party_leave, undef],
 	["packet_pre/actor_info", \&actor_info, undef],
+	['packet_privMsg', \&on_private_message, undef],
 
 	['Network::Receive::map_changed', \&changedMap, undef],
 
@@ -355,6 +364,9 @@ sub partyJoin
 	#my $minLvl = getPartyLevelRangeMin();
 	#my $maxLvl = getPartyLevelRangeMax();
 
+	return unless defined $partyStoredLevel{min};
+	return unless defined $partyStoredLevel{max};
+
 	my $minLvl = $partyStoredLevel{min};
 	my $maxLvl = $partyStoredLevel{max};
 
@@ -368,6 +380,8 @@ sub partyJoin
 	{
 		print $args->{user}."(".$args->{lv}.") is within the range of $minLvl ~ $maxLvl!\n";
 		UpdatePartyLevelRange();
+
+		scanForPriest();
 	}
 
 	#print Dumper($args);
@@ -474,8 +488,10 @@ sub npcMsg
 	given($message){
 
 		# someone is search for a party
-		when($_ =~ /(LFG) (\d+) (.*)/)
+		when($_ =~ /(LFG) (\d+) (.*)/ || $_ =~ /(LFG) (\d+)/ )
 		{
+
+			continue if($name eq $char->{name});
 			print "[botPartyGo] someone is looking for a party! Their class is ".$3."\n";
 
 			# TODO: have a list of classes you want to invite
@@ -489,25 +505,76 @@ sub npcMsg
 					and $2 >= $partyStoredLevel{min})
 				{
 					# we can Invite
-					sendMessage($messageSender, "p", "sending a request to $name");
-					Commands::run("party request $name");
+					#sendMessage($messageSender, "p", "sending a request to $name");
+					#Commands::run("party request $name");
+
+					# <TODO> re-send the message in global that the party is open
+					$myTimeouts->{'broadcast_spam'} = 0;
 				}
 			}
 		}
 
 		# "Open Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite"
-		when($_ =~ /(Open Party )(\d+)(~)(\d+)(.*)(\d+)(\/)(\d+)(.*)/)
+		# when($_ =~ /(Open Party )(\d+)(~)(\d+)(.*)(\d+)(\/)(\d+)(.*)/)
+		# sendMessage($messageSender, "pm", "Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to me for invite", "#Global");
+		when($_ =~ /(Party )(\d+)(~)(\d+)(.*)(\d+)(\/)(\d+)(.*)/)
 		{
 			# $2 = min LEVEL
 			# $4 = max LEVEL
 			# $6 = current party count
 
+			print "Got here test aco!!!\n";
+
 			if($config{"BPG_isPartyMember"})
 			{
-				if(!$char->{party}{joined} and $2 >= $char->{lv} and $4 <= $char->{lv})
+				#if(!$char->{party}{joined} and $2 >= $char->{lv} and $4 <= $char->{lv}
+				if(!$char->{party}{joined} and $char->{lv} >= $2 and $char->{lv} <= $4
+					and timeOut($myTimeouts->{'send_request'}->{$name}, 20)
+					and $config{"BPG_dontAskPM"} ne 1)
 				{
-					$myTimeouts->{'request_spam'} = 0;
+					print "Got here test aco 2!!!\n";
+
+					#$myTimeouts->{'request_spam'} = 0;
+					# send the party leader a PM with your lvl: 'LFG 88'
+					sendMessage($messageSender, "pm", "LFG ".$char->{lv}." ".$jobs_lut{$char->{jobID}}, $name);
+					$myTimeouts->{'send_request'}->{$name} = time;
 				}
+			}
+		}
+	}
+}
+
+sub on_private_message
+{
+	my (undef, $args) = @_;
+
+	# Sender's username  
+	my $sender = $args->{privMsgUser};
+
+	# Message content  
+	my $message = $args->{privMsg};
+
+	# party leader getting an invite request
+	# when($_ =~ /(LFG) (\d+) (.*)/ || $_ =~ /(LFG) (\d+)/ )
+	if($message =~ /(LFG) (\d+) (.*)/ || $message =~ /(LFG) (\d+)/)
+	{
+		print "[botPartyGo] someone is looking for a party! Their class is ".$3."\n";
+
+		# TODO: have a list of classes you want to invite
+
+		# someone is LFG, if we're the party leader, do some stuff
+		if($config{"BPG_isPartyLeader"})
+		{
+			# STEP 1 - check if the party is full. If it's not, continue
+			if(scalar(@partyUsersID) < 12
+				and $2 <= $partyStoredLevel{max}
+				and $2 >= $partyStoredLevel{min})
+			{
+				# we can Invite
+				#sendMessage($messageSender, "p", "sending a request to $name");
+				Commands::run("party request $sender");
+
+				# <TODO> re-send the message in global that the party is open
 			}
 		}
 	}
@@ -661,6 +728,22 @@ sub partyMsg
 				sendMessage($messageSender, "p", "Nope! Not goin there");
 			}
 		}
+
+		when("res OK")
+		{
+			$timeout{ai_dead_respawn}{timeout} = 120;
+		}
+
+		when("res check")
+		{
+			#if($char->{jobID} == 8 || $char->{jobID} == 4009)
+			#{
+				if($char->{skills}{"ALL_RESURRECTION"})
+				{
+					sendMessage($messageSender, "p", "res OK");
+				}
+			#}
+		}
 	}
 }
 
@@ -778,6 +861,13 @@ sub ai_pre_LEADER
 		UpdatePartyLevelRange();
 	}
 
+	# update the stored levels every 60s otherwise they desync and new peeps can't join
+	if(timeOut($myTimeouts->{'update_stored'},60))
+	{
+		$myTimeouts->{'update_stored'} = time;
+		$queueUpdatePartyRange = TRUE;
+	}
+
 	# check if there are empty party slots, if there are, send out a broadcast message
 	if(scalar(@partyUsersID) < 12 and timeOut($myTimeouts->{'broadcast_spam'},BROADCAST_TIMEOUT))
 	{
@@ -790,7 +880,8 @@ sub ai_pre_LEADER
 		my $maxLevel = getPartyLevelRangeMax();
 		my $partyCount = scalar(@partyUsersID);
 
-		sendMessage($messageSender, "pm", "Open Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to #Global for invite", "#Global");
+		#sendMessage($messageSender, "pm", "Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\} \{job\}' to me for invite", "#Global");
+		sendMessage($messageSender, "pm", "Party $minLevel~$maxLevel ($partyCount/12) at ".$config{lockMap}.", pm 'LFG \{lvl\}' to me for invite", "#Global");
 
 		# TODO: level range stuff
 
@@ -860,7 +951,7 @@ sub ai_pre_MEMBER
 	#print Dumper($args);
 
 	# check if you're in a party, if you're not, send out some feelers for open parties
-	if(!$char->{party}{joined} && timeOut($myTimeouts->{'request_spam'},60))
+	if(!$char->{party}{joined} && timeOut($myTimeouts->{'request_spam'},120))
 	{
 		$myTimeouts->{'request_spam'} = time;
 		# send out feelers
@@ -1227,7 +1318,21 @@ sub ai_post
 		undef $queueUpdatePartyRange;
 
 		# also force an update to the party share range
-		$timeout{ai_partyShareCheck}{time} = 0;
+		#$timeout{ai_partyShareCheck}{time} = 0;
+		#$myTimeouts->{'shareCheck'} = 0;
+
+		# manually update the EXP share, don't wait for timeout
+		unless($config{"BPG_dontOverrideExpShare"} eq 1)
+		{
+			if($char->{party}{share} ne 1 || $char->{party}{itemPickup} ne $config{partyAutoShareItem} || $char->{party}{itemDivision} ne $config{partyAutoShareItemDiv})
+			{
+				$messageSender->sendPartyOption(1, $config{partyAutoShareItem}, $config{partyAutoShareItemDiv});
+			}
+		}
+		else
+		{
+			$timeout{ai_partyShareCheck}{time} = 0;
+		}
 	}
 }
 
@@ -1263,7 +1368,7 @@ sub injectConfig
 	$config{"partySkill_$i"."_notPartyOnly"}
 =cut
 
-	my $selfSkillIndex = 0;
+	my $selfSkillIndex = -1;
 	for (my $i = 0; exists $config{"useSelf_skill_$i"}; $i++) {
 		$selfSkillIndex = $i;
 	}
@@ -1288,7 +1393,7 @@ sub injectConfig
 =cut
 
 
-	my $doCommandIndex = 0;
+	my $doCommandIndex = -1;
 
 	for (my $i = 0; exists $config{"doCommand_$i"}; $i++) {
 		$doCommandIndex = $i;
@@ -1303,6 +1408,35 @@ sub injectConfig
 	$config{"doCommand_$doCommandIndex"."_whenStatusActive"} = "Cloaking";
 
 
+}
+
+sub scanForPriest
+{
+	my $priestCheckOK = FALSE;
+	# timeout
+	for (my $i = 0; $i < @partyUsersID; $i++) {
+		next if ($partyUsersID[$i] eq "");
+
+		# skip check if its me?
+		# next if $char->{name} eq $char->{'party'}{'users'}{$partyUsersID[$i]}{'name'};
+
+		# 8 => 'Priest',
+		# 4009 => 'High Priest',
+
+		if ($char->{'party'}{'users'}{$partyUsersID[$i]}{'jobID'} == 8
+		|| $char->{'party'}{'users'}{$partyUsersID[$i]}{'jobID'} == 4009
+		)
+		{
+			$priestCheckOK = TRUE;
+		}
+
+		last;
+	}
+
+	if($priestCheckOK == TRUE)
+	{
+		sendMessage($messageSender, "p", "res check");
+	}
 }
 
 sub dumpConfig
