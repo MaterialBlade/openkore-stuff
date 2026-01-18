@@ -21,6 +21,8 @@ sub main
 	my $i = 0;
 	my $nameLine = -1;
 	
+	my $nameType = 3;
+	
 	print "File can't be loaded\n" unless (-r $file);
 	return unless (-r $file);
 
@@ -31,15 +33,26 @@ sub main
 	foreach my $line (@temp) {
 		push @output, $line;
 
+		# check for -3
+		if($line =~ /(unidentifiedDescriptionName = \{ ")/)
+		{
+			$nameType = 3;
+		}
+		# check for -5
+		elsif($line =~ /(unidentifiedDescriptionName = \{)[\n]/)
+		{
+			$nameType = 5;
+		}
+
 		if($line =~ /(\s+)(identifiedDisplayName = ")(.*)/)
 		{
-			$output[$i-3] = $1."un".$2."[?]".$3."\n";
-			$nameLine = ($i-3);
+			$output[$i-$nameType] = $1."un".$2."[?]".$3."\n";
+			$nameLine = ($i-$nameType);
 		}
 
 		if($line =~ /(\s+)(identifiedResourceName = ")(.*)/)
 		{
-			$output[$i-3] = $1."un".$2.$3."\n";
+			$output[$i-$nameType] = $1."un".$2.$3."\n";
 		}
 		
 		if($line =~ /(\s+)(slotCount = )(\d+)(,)/)
