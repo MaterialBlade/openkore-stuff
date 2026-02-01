@@ -1,6 +1,7 @@
 ###########
 #	Small version of 'betterLeader' made by MaterialBlade. Based in part on the wait4Party plugin by Contrad
 #
+#	This software is open source, licensed under the GNU General Public Liscens
 #	USER NOTE:
 #	If you use betterWalkPlan you will need to modify the top of the `on_ai_processRandomWalk` to look like this:
 #
@@ -15,6 +16,49 @@
 #		...
 #
 #	This $args->{return} prevents the map route from updating every time betterLeader sets a waypoint
+#
+#
+#
+=pod
+	--- CONFIGURATION
+	Add to config.txt
+	- betterLeader [1] - enables the plugin
+	- betterLeader_castWait [1.7] - 'wait'' if a skill's cast time is longer than this
+	- betterLeader_showMsg [0|1] - show some msgs in console
+	- betterLeader_ignoreList [comma separated list] - list of char names to IGNORE waiting for
+	- betterLeader_waitCastList [comma separated list] - list of char names to check for long cast times
+
+	Add to mapWalkDist.json
+
+	- "DISTBREAK" as a map value always needs to be wrapped in quotes
+	- "DISTBREAK*#" as a map value always needs to be wrapped in quotes, where # = a multilier (eg 0.5)
+	- regular numbers don't need to be wrapped in quotes
+
+	--- EXAMPLE config.txt
+	betterLeader 1
+	betterLeader_castWait 1.7
+	betterLeader_showMsg 0
+	betterLeader_ignore Kruin Outlaw, Moonrise Intruder, Kessig Forgemaster, Ulvenwald Mystic
+	betterLeader_waitCastList Hanweir Watchkeep
+
+	--- EXAMPLE mapWalkDist.json
+	{
+		"data":{
+			"distbreak":16,
+		
+			"map_name1":8,
+			"map_name2":50,
+			"map_name3":"DISTBREAK",
+			"map_name4":"DISTBREAK*0.75",
+		}
+	}
+
+	--- CONSOLE COMMANDS
+	`blc` lists the available commands
+	`blc reload` list the options for reloading
+	
+=cut
+
 ###########
 
 
@@ -254,6 +298,10 @@ sub blCommands
 			Settings::loadByHandle($file_handle2);
 			#sleep(0.333);
 			updateWalkDist() if defined $field;
+		}
+		else
+		{
+			print "reload options are: walkmaps\n";
 		}
 	}
 	else
@@ -581,8 +629,8 @@ sub prelims
 				}
 
 				# we need to stop moving for a bit. how the fuck do we do that? :D
-				message "we're too far from stored position. pause movement\n", "follow";
-				message TF("waiting for cast\n"), "selfSkill" if($waitForCast);
+				message "we're too far from stored position. pause movement\n", "follow" if $config{betterLeader_showMsg};
+				message TF("waiting for cast\n"), "selfSkill" if($waitForCast and $config{betterLeader_showMsg});
 
 				$args->{move_timeout} = time+(2*60);
 				my $time_increase = time;
@@ -648,7 +696,7 @@ sub waitCast
 	my $castTime = ($actor->{castTime})* 0.001;
 	if($castTime > $config{"betterLeader_castWait"})
 	{
-		message TF("waiting for cast, time is $castTime\n"), "selfSkill";
+		message TF("waiting for cast, time is $castTime\n"), "selfSkill" if $config{betterLeader_showMsg};
 		$mytimeout->{'recheck'} = time;
 		$waitForCast = TRUE;
 	}
