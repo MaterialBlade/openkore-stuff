@@ -28,7 +28,8 @@
 	- betterLeader_ignoreList [comma separated list] - list of char names to IGNORE waiting for
 	- betterLeader_waitCastList [comma separated list] - list of char names to check for long cast times
 
-	Add to mapWalkDist.json
+	Add mapWalkDist.json to your control folder
+	Add add map+distance pairs to mapWalkDist.json
 
 	- "DISTBREAK" as a map value always needs to be wrapped in quotes
 	- "DISTBREAK*#" as a map value always needs to be wrapped in quotes, where # = a multilier (eg 0.5)
